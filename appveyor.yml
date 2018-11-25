@@ -74,20 +74,48 @@ after_test:
     & Setup\Set-Portable.ps1
     if ($LastExitCode -ne 0) { $host.SetShouldExit($LastExitCode) }
 
-artifacts:
-    # upload the generated portable archive only
-  - path: 'Setup/GitExtensions-Portable-*.zip'
-
 # here we are going to override common configuration
 for:
 
-# configuration for all branches starting from "dev-"
-# build in Debug mode and deploy locally for testing
+# configuration for all branches except release/*
+-
+  branches:
+    except:
+      - /release\/.*/
+  artifacts:
+    # upload the generated portable archive only
+    - path: 'Setup/GitExtensions-Portable-*.zip'
+
+# configuration for release branches ONLY
 -
   branches:
     only:
       - /release\/.*/
 
-  artifacts:
-    # upload the generated installer
-    - path: 'Setup/GitExtensions-*.msi'
+  environment:
+    spciuser:
+      secure: 4QXP0320t58i/t7YdtrdLYxV86fBFEd81QVGC2RN1yAKb3o5/F/xG39uKOJniyli
+
+  on_success:
+  - ps: |
+      pushd .\Setup
+      [Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+      Invoke-WebRequest -Uri https://app.signpath.io/API/v1/Tools/SignPath.psm1 -OutFile .\SignPath.psm1
+      if (!(Test-Path .\SignPath.psm1)) {
+          throw 'Unable to download https://app.signpath.io/API/v1/Tools/SignPath.psm1'
+      }
+      Import-Module .\SignPath.psm1 -Force;
+      # get files
+      $msi = (Resolve-Path GitExtensions-*.msi)[0].Path;
+      $zip = (Resolve-Path GitExtensions-Portable-*.zip)[0].Path;
+      Compress-Archive -LiteralPath $msi, $zip -CompressionLevel NoCompression -DestinationPath .\combined.zip
+      #$msiSigned = $msi.Replace('.msi', '-signed.msi');
+      Submit-SigningRequest `
+          -InputArtifactPath .\combined.zip `
+          -CIUserToken $env:spciuser `
+          -OrganizationId '7c19b2cf-90f7-4d15-9b12-1b615f7c18c4' `
+          -SigningPolicyId '8efd636e-c408-4406-a14a-1d481f6163bf' #`
+          #-OutputArtifactPath $msiSigned `
+          #-WaitForCompletionTimeoutInSeconds 120
+      #$msiName = Split-Path $msi -Leaf
+      #Push-AppveyorArtifact $msiSigned -FileName $msiName
